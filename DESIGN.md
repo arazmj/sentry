@@ -193,7 +193,7 @@ Usage of start:
 * Job output is captured and stored in memory and sent to CLI clients.
 
 ### Job Execution:
-* The server creates a new directory under /sys/fs/cgroup/sentry-[PID].
+* The server creates a new directory under /sys/fs/cgroup/sentry-[JobID].
 * The CPU limit parameter value is written to `cpu.max` fd.
 * The memory limit parameter value is written to `memory.max` fd.
 * The disk IO limit parameter value is written to `io.max` fd.
