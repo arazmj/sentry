@@ -37,7 +37,7 @@ while the client provides a CLI for job interaction.
 
 ```
 service SentryService {
-  rpc StartJob (StartJobRequest) returns (JobOutput) {}
+  rpc StartJob (StartJobRequest) returns (Empty) {}
   rpc KillJob (KillJobRequest) returns (KillJobResponse) {}
   rpc GetJobStatus (JobStatusRequest) returns (JobStatusResponse) {}
   rpc StreamJobLogs (JobLogsRequest) returns (stream JobOutput) {}
@@ -46,11 +46,6 @@ service SentryService {
 
 message StartJobRequest {
   string command = 1;
-  string memory_limit = 2;
-  string cpu_limit = 3;
-  string mount = 4;
-  string write_bps = 5;
-  string read_bps = 6;
 }
 
 message JobOutput {
@@ -74,7 +69,6 @@ message JobStatusRequest {
 
 message JobStatusResponse {
   bool is_running = 1;
-  string status = 2;
 }
 
 message JobLogsRequest {
@@ -82,7 +76,7 @@ message JobLogsRequest {
 }
 
 message JobLogsResponse {
-  string logs = 1;
+  bytes logs = 1;
 }
 
 message ListJobsRequest {}
@@ -91,11 +85,6 @@ message JobInfo {
   int32 job_id = 1;
   string command = 2;
   bool is_running = 3;
-  string memory_limit = 4;
-  string cpu_limit = 5;
-  string mount = 6;
-  string write_bps = 7;
-  string read_bps = 8;
 }
 
 message ListJobsResponse {
@@ -115,6 +104,24 @@ message KillJobResponse {
 ## Job IDs
 Jobs are identified using UUIDs rather than process IDs or sequential counters. This choice addresses several key requirements:
 
+## Constant
+* **CPU_LIMIT**: CPU limit in shares in format of QUOTA PERIOD
+
+  QUOTA: The maximum amount of CPU time a cgroup can consume within a scheduling period, in microseconds (µs).
+
+  PERIOD: The length of the scheduling period, also in microseconds (µs).
+
+  Example:
+   ```
+   50000 100000
+   ```
+
+  This means the processes in this cgroup can use 50,000 µs (50ms) of CPU time every 100,000 µs (100ms) period, effectively limiting the CPU usage to 50%.
+* **MEMORY-LIMIT**: The maximum amount of memory allowed in bytes
+* **MOUNT**: Directory path to mount for the job. The server does not mount /bin /usr/bin /lib directories automatically
+* **RBPS-LIMIT**: Read bytes per second limit (e.g., '1048576' for 1MB/s)
+* **WBPS-LIMIT**: Write bytes per second limit (e.g., '1048576' for 1MB/s)
+
 
 ## CLI User Experience
 Users interact via a CLI tool with the following commands:
@@ -130,29 +137,11 @@ Users interact via a CLI tool with the following commands:
 
 * **start**: Runs a new job
 
-    Usage of start:
-  * **--force**: Stream command output to console
-  * **--cpu-limit**: CPU limit in shares in format of QUOTA PERIOD
-
-    QUOTA: The maximum amount of CPU time a cgroup can consume within a scheduling period, in microseconds (µs).
-
-    PERIOD: The length of the scheduling period, also in microseconds (µs).
-
-    Example:
-    ```
-    50000 100000
-    ```
-
-    This means the processes in this cgroup can use 50,000 µs (50ms) of CPU time every 100,000 µs (100ms) period, effectively limiting the CPU usage to 50%.
-  * **--memory-limit**: The maximum amount of memory allowed in bytes
-  * **--mount**: Directory path to mount for the job. The server does not mount /bin /usr/bin /lib directories automatically 
-  * **--rbps-limit**: Read bytes per second limit (e.g., '1048576' for 1MB/s)
-  * **--wbps-limit**: Write bytes per second limit (e.g., '1048576' for 1MB/s)
-
-
+Usage of start:
+ 
   Example:
   ```
-  $ sentry start -cmd "python script.py" -memory-limit "51200000" -cpu-limit "2000000 5000000"
+  $ sentry start -cmd "python script.py""
   Started job with ID: 1234
   
   $ sentry status -id 1234
@@ -171,9 +160,9 @@ Users interact via a CLI tool with the following commands:
 
   Example:
   ```
-  JOB ID     STATUS     MEM-LIMIT  CPU-LIMIT       WRITE-BPS       READ-BPS        COMMAND
-  ------------------------------------------------------------------------------------------
-  1234       running    30000      10000 20000     120000          120000          dd 
+  JOB ID     STATUS      COMMAND
+  ----------------------------------
+  1234       running     dd 
   ```
  
 * **logs** Shows the output of the job or streams the running job output
@@ -199,8 +188,7 @@ Users interact via a CLI tool with the following commands:
 * The server authorizes the user against for the request against the roles defined in sentry-security. 
   * The client identity is the CN field of the certificate
     * For testing purposes, both the client and server are using a self-signed CA. However, in production, the client should present a user certificate signed by a trusted CA, not the CA itself.
-  * The action will run if the client identity is defined in `sentry-roles.toml` file and the user has permission for the action.
-* The server validates request and spawns a new process using `/bin/sh -c`.
+  * The action will run if the client identity is defined in `SENTRY_ROLES` static variable and the user has permission for the action.
 * The process is assigned to a cgroup with defined CPU, memory, and I/O constraints.
 * Job output is captured and stored in memory and sent to CLI clients.
 
@@ -220,7 +208,11 @@ Users interact via a CLI tool with the following commands:
 * Status is tracked in memory.
 
 ### Job Termination:
-* When a stop or kill request is received, the process is terminated via SIGTERM.
+* To ensure all processes in a spawned group are terminated, we:
+  * Assign the process to a new process group using syscall.SysProcAttr{Setpgid: true}.
+  * Retrieve the process group ID (PGID) using syscall.Getpgid().
+  * Send the SIGKILL signal to the process group (-PGID).
+
 * The associated cgroup is cleaned up. If the server shuts down, it ensures that all running jobs are terminated gracefully. A termination signal triggers cleanup procedures that remove jobs from memory, free allocated resources, and delete the corresponding cgroups. If a forced shutdown occurs, any remaining jobs might be left in an inconsistent state, requiring manual cleanup upon restart.
 * The job record is removed from the manager.
 
@@ -232,15 +224,10 @@ Users interact via a CLI tool with the following commands:
 * Signal Handling: Gracefully handles termination signals and cleans up running jobs.
 
 ### User Role Configuration
-A `sentry-roles.toml` file defines user roles and allowed requests:
+A SENTRY_ROLES const defines user roles and allowed requests:
 ```toml
-[users]
-
-[users.alice]
-allowed_requests = ["StartJob", "StopJob", "GetJobStatus", "GetJobLogs"]
-
-[users.bob]
-allowed_requests = ["StartJob", "ListJobs"]
+alice = ["StartJob", "StopJob", "GetJobStatus", "GetJobLogs"]
+bob = ["StartJob", "ListJobs"]
 ```
 
 ## Edge Cases 
