@@ -16,6 +16,23 @@ while the client provides a CLI for job interaction.
 4. Provide a secure gRPC API with TLS authentication.
 5. Provide a authorization by a config file representing assigned roles to a user
 
+## Security Considerations
+* The service implements mTLS authentication, requiring both server and client certificates for all connections.
+  * Protocol Version: TLS 1.3 
+  * Cipher Suites: Using TLS 1.3's default AEAD ciphers:
+    * TLS_AES_128_GCM_SHA256
+    * TLS_AES_256_GCM_SHA384
+    * TLS_CHACHA20_POLY1305_SHA256
+  * Elliptic Curves: Default Go preferences:
+    * X25519 (primary)
+    * NIST P-256
+    * NIST P-384
+    * NIST P-521
+  * RSA-4096 or ECDSA P-256/P-384 keys
+  * SHA-256 or stronger signatures
+* Only authorized clients with valid certificates can interact with the server.
+* Only clients with proper access role can perform an action, i.e Start, Kill
+
 ## Proposed gRPC API
 
 ```
@@ -23,7 +40,6 @@ service SentryService {
   rpc StartJob (StartJobRequest) returns (JobOutput) {}
   rpc KillJob (KillJobRequest) returns (KillJobResponse) {}
   rpc GetJobStatus (JobStatusRequest) returns (JobStatusResponse) {}
-  rpc GetJobLogs (JobLogsRequest) returns (JobLogsResponse) {}
   rpc StreamJobLogs (JobLogsRequest) returns (stream JobOutput) {}
   rpc ListJobs (ListJobsRequest) returns (ListJobsResponse) {}
 }
@@ -39,7 +55,7 @@ message StartJobRequest {
 
 message JobOutput {
   int32 job_id = 1;
-  string data = 2;
+  bytes data = 2;
   bool is_stderr = 3;
 }
 
@@ -96,6 +112,10 @@ message KillJobResponse {
 }
 ```
 
+## Job IDs
+Jobs are identified using UUIDs rather than process IDs or sequential counters. This choice addresses several key requirements:
+
+
 ## CLI User Experience
 Users interact via a CLI tool with the following commands:
 ```
@@ -141,11 +161,11 @@ Users interact via a CLI tool with the following commands:
 
 * **status**: Shows the status of the job
 
-  Parameters: -id Job ID/PID
+  Parameters: -id Job ID
 
 * **kill**: Terminates the job by SIGTERM signal
 
-  Parameters: -id Job ID/PID
+  Parameters: -id Job ID
 
 * **list**: Lists all running jobs along with assigned parameters 
 
@@ -162,7 +182,7 @@ Users interact via a CLI tool with the following commands:
 
   **-force**: Stream logs in real-time
 
-  **-id**: Job ID/PID
+  **-id**: Job ID
   
   Example:
   ```
@@ -177,7 +197,8 @@ Users interact via a CLI tool with the following commands:
 ### Job Initialization:
 * User starts a job via CLI.
 * The server authorizes the user against for the request against the roles defined in sentry-security. 
-  * The client identity is the CN field of the CA
+  * The client identity is the CN field of the certificate
+    * For testing purposes, both the client and server are using a self-signed CA. However, in production, the client should present a user certificate signed by a trusted CA, not the CA itself.
   * The action will run if the client identity is defined in `sentry-roles.toml` file and the user has permission for the action.
 * The server validates request and spawns a new process using `/bin/sh -c`.
 * The process is assigned to a cgroup with defined CPU, memory, and I/O constraints.
@@ -192,6 +213,10 @@ Users interact via a CLI tool with the following commands:
 * The process runs within its assigned cgroup.
 * Output is streamed to subscribers. 
   * The server keeps streaming to all running clients and stops when there is a network transportation error (client disconnects)
+  * The system uses a callback-based streaming model to handle process output.
+    * Each job maintains a list of output callbacks for real-time streaming
+    * Process stdout/stderr are read in separate goroutines using buffered I/O
+    * Output is stored in memory buffers for history while simultaneously streaming to active subscribers
 * Status is tracked in memory.
 
 ### Job Termination:
@@ -225,5 +250,3 @@ allowed_requests = ["StartJob", "ListJobs"]
 * Avoid dangling goroutines or memory leaks
 * Proper cleanup after job execution finished, cleaning up cgroup file descriptor
 * Server handles SIGINT to allow safe termination.
-
-
