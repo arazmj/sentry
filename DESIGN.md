@@ -19,17 +19,81 @@ while the client provides a CLI for job interaction.
 ## Proposed gRPC API
 
 ```
-StartJob(StartJobRequest) returns (stream JobOutput)
+service SentryService {
+  rpc StartJob (StartJobRequest) returns (JobOutput) {}
+  rpc KillJob (KillJobRequest) returns (KillJobResponse) {}
+  rpc GetJobStatus (JobStatusRequest) returns (JobStatusResponse) {}
+  rpc GetJobLogs (JobLogsRequest) returns (JobLogsResponse) {}
+  rpc StreamJobLogs (JobLogsRequest) returns (stream JobOutput) {}
+  rpc ListJobs (ListJobsRequest) returns (ListJobsResponse) {}
+}
 
-GetJobStatus(JobStatusRequest) returns (JobStatusResponse)
+message StartJobRequest {
+  string command = 1;
+  string memory_limit = 2;
+  string cpu_limit = 3;
+  string mount = 4;
+  string write_bps = 5;
+  string read_bps = 6;
+}
 
-GetJobLogs(JobLogsRequest) returns (JobLogsResponse)
+message JobOutput {
+  int32 job_id = 1;
+  string data = 2;
+  bool is_stderr = 3;
+}
 
-ListJobs(ListJobsRequest) returns (ListJobsResponse)
+message StopJobRequest {
+  int32 job_id = 1;
+}
 
-KillJob(KillJobRequest) returns (KillJobResponse)
+message StopJobResponse {
+  bool success = 1;
+  string message = 2;
+}
 
-StreamJobLogs(JobLogsRequest) returns (stream JobOutput)
+message JobStatusRequest {
+  int32 job_id = 1;
+}
+
+message JobStatusResponse {
+  bool is_running = 1;
+  string status = 2;
+}
+
+message JobLogsRequest {
+  int32 job_id = 1;
+}
+
+message JobLogsResponse {
+  string logs = 1;
+}
+
+message ListJobsRequest {}
+
+message JobInfo {
+  int32 job_id = 1;
+  string command = 2;
+  bool is_running = 3;
+  string memory_limit = 4;
+  string cpu_limit = 5;
+  string mount = 6;
+  string write_bps = 7;
+  string read_bps = 8;
+}
+
+message ListJobsResponse {
+  repeated JobInfo jobs = 1;
+}
+
+message KillJobRequest {
+  int32 job_id = 1;
+}
+
+message KillJobResponse {
+  bool success = 1;
+  string message = 2;
+}
 ```
 
 ## CLI User Experience
@@ -77,11 +141,11 @@ Users interact via a CLI tool with the following commands:
 
 * **status**: Shows the status of the job
 
-  Parameters: -id Job ID
+  Parameters: -id Job ID/PID
 
 * **kill**: Terminates the job by SIGTERM signal
 
-  Parameters: -id Job ID
+  Parameters: -id Job ID/PID
 
 * **list**: Lists all running jobs along with assigned parameters 
 
@@ -98,7 +162,7 @@ Users interact via a CLI tool with the following commands:
 
   **-force**: Stream logs in real-time
 
-  **-id**: Job ID
+  **-id**: Job ID/PID
   
   Example:
   ```
@@ -113,13 +177,21 @@ Users interact via a CLI tool with the following commands:
 ### Job Initialization:
 * User starts a job via CLI.
 * The server authorizes the user against for the request against the roles defined in sentry-security. 
+  * The client identity is the CN field of the CA
+  * The action will run if the client identity is defined in `sentry-roles.toml` file and the user has permission for the action.
 * The server validates request and spawns a new process using `/bin/sh -c`.
 * The process is assigned to a cgroup with defined CPU, memory, and I/O constraints.
 * Job output is captured and stored in memory and sent to CLI clients.
 
 ### Job Execution:
+* The server creates a new directory under /sys/fs/cgroup/sentry-[PID].
+* The CPU limit parameter value is written to `cpu.max` fd.
+* The memory limit parameter value is written to `memory.max` fd.
+* The disk IO limit parameter value is written to `io.max` fd.
+* The PID of the job is written to `cgroup.procs` fd.
 * The process runs within its assigned cgroup.
-* Output is streamed to subscribers.
+* Output is streamed to subscribers. 
+  * The server keeps streaming to all running clients and stops when there is a network transportation error (client disconnects)
 * Status is tracked in memory.
 
 ### Job Termination:
@@ -130,7 +202,7 @@ Users interact via a CLI tool with the following commands:
 ## Implementation Details
 * Server: Implements job control logic using JobManager.
 * CLI Client: Sends gRPC requests and handles responses.
-* Cgroups Management: Uses /sys/fs/cgroup for process isolation.
+* Cgroups Management: Uses `/sys/fs/cgroup` for process isolation.
 * Logging & Streaming: Uses for real-time output streaming.
 * Signal Handling: Gracefully handles termination signals and cleans up running jobs.
 
