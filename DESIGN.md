@@ -4,17 +4,13 @@ Sentry is a gRPC-based job manager that allows users to start, stop, monitor,
 and manage resource-constrained jobs. It provides a CLI interface for interaction 
 and enforces resource limits via cgroups.
 
-## Design Approach
-The system follows a client-server model with gRPC for communication. 
-The server runs jobs within isolated environments using Linux process controls and cgroups, 
-while the client provides a CLI for job interaction.
-
 ## Scope
-1. Start, stop, monitor, and retrieve real-time logs of jobs.
-2. Enforce CPU, memory, and disk I/O constraints using cgroups2.
-3. Support job execution in a Linux new namespace.
-4. Provide a secure gRPC API with TLS authentication.
-5. Provide a authorization by a config file representing assigned roles to a user
+* Start, stop, monitor, and retrieve real-time logs of jobs.
+* Enforce CPU, memory, and disk I/O constraints using cgroups2 (the limits are hard-coded).
+* Support job execution in a Linux new namespace.
+* Provide a secure gRPC API with TLS authentication.
+* Provide an authorization by a config file representing assigned roles to a user.
+* The code is only tested on Debian 6.1.129
 
 ## Security Considerations
 * The service implements mTLS authentication, requiring both server and client certificates for all connections.
@@ -37,7 +33,7 @@ while the client provides a CLI for job interaction.
 
 ```
 service SentryService {
-  rpc StartJob (StartJobRequest) returns (Empty) {}
+  rpc StartJob (StartJobRequest) returns (StartJobResponse)  {}
   rpc KillJob (KillJobRequest) returns (KillJobResponse) {}
   rpc GetJobStatus (JobStatusRequest) returns (JobStatusResponse) {}
   rpc StreamJobLogs (JobLogsRequest) returns (stream JobOutput) {}
@@ -46,16 +42,21 @@ service SentryService {
 
 message StartJobRequest {
   string command = 1;
+  repeated string commandArgs = 2;
 }
 
 message JobOutput {
-  int32 job_id = 1;
+  string job_id = 1;
   bytes data = 2;
   bool is_stderr = 3;
 }
 
+message StartJobResponse{
+  string job_id = 1;
+}
+
 message StopJobRequest {
-  int32 job_id = 1;
+  string job_id = 1;
 }
 
 message StopJobResponse {
@@ -64,7 +65,7 @@ message StopJobResponse {
 }
 
 message JobStatusRequest {
-  int32 job_id = 1;
+  string job_id = 1;
 }
 
 message JobStatusResponse {
@@ -72,7 +73,7 @@ message JobStatusResponse {
 }
 
 message JobLogsRequest {
-  int32 job_id = 1;
+  string job_id = 1;
 }
 
 message JobLogsResponse {
@@ -82,7 +83,7 @@ message JobLogsResponse {
 message ListJobsRequest {}
 
 message JobInfo {
-  int32 job_id = 1;
+  string job_id = 1;
   string command = 2;
   bool is_running = 3;
 }
@@ -92,7 +93,7 @@ message ListJobsResponse {
 }
 
 message KillJobRequest {
-  int32 job_id = 1;
+  string job_id = 1;
 }
 
 message KillJobResponse {
@@ -102,7 +103,7 @@ message KillJobResponse {
 ```
 
 ## Job IDs
-Jobs are identified using UUIDs rather than process IDs or sequential counters. This choice addresses several key requirements:
+Jobs are identified are tracked internally as UUIDs rather than process IDs or sequential counters.
 
 ## Constant
 * **CPU_LIMIT**: CPU limit in shares in format of QUOTA PERIOD
@@ -141,7 +142,7 @@ Usage of start:
  
   Example:
   ```
-  $ sentry start -cmd "python script.py""
+  $ sentry start -cmd python -- script.py
   Started job with ID: 1234
   
   $ sentry status -id 1234
@@ -160,9 +161,9 @@ Usage of start:
 
   Example:
   ```
-  JOB ID     STATUS      COMMAND
-  ----------------------------------
-  1234       running     dd 
+  JOB ID                                   STATUS     COMMAND
+  ------------------------------------------------------------
+  6aeab32e-0742-11f0-b330-8e0b0e62b7b5     running    bash
   ```
  
 * **logs** Shows the output of the job or streams the running job output
@@ -175,7 +176,7 @@ Usage of start:
   
   Example:
   ```
-  $ sentry-run logs -id 1234
+  $ sentry-run logs -id 6aeab32e-0742-11f0-b330-8e0b0e62b7b5
   Job output logs...
   Error messages...
   ```
@@ -191,14 +192,16 @@ Usage of start:
   * The action will run if the client identity is defined in `SENTRY_ROLES` static variable and the user has permission for the action.
 * The process is assigned to a cgroup with defined CPU, memory, and I/O constraints.
 * Job output is captured and stored in memory and sent to CLI clients.
+  * Once the job started a running goroutine in the background reads the stdout/stdout and calls `stream.Send()` for each client them to clients.
 
 ### Job Execution:
-* The server creates a new directory under /sys/fs/cgroup/sentry-[JobID].
-* The CPU limit parameter value is written to `cpu.max` fd.
-* The memory limit parameter value is written to `memory.max` fd.
-* The disk IO limit parameter value is written to `io.max` fd.
-* The PID of the job is written to `cgroup.procs` fd.
-* The process runs within its assigned cgroup.
+* The process runs within its assigned cgroup by following process.
+  1. The server creates a new directory under /sys/fs/cgroup/sentry-[JobID].
+  2. The CPU limit parameter value is written to `cpu.max` fd.
+  3. The memory limit parameter value is written to `memory.max` fd.
+  4. The disk IO limit parameter value is written to `io.max` fd.
+  5. The PID of the job is written to `cgroup.procs` fd.
+  
 * Output is streamed to subscribers. 
   * The server keeps streaming to all running clients and stops when there is a network transportation error (client disconnects)
   * The system uses a callback-based streaming model to handle process output.
@@ -209,8 +212,8 @@ Usage of start:
 
 ### Job Termination:
 * To ensure all processes in a spawned group are terminated, we:
-  * Assign the process to a new process group using syscall.SysProcAttr{Setpgid: true}.
-  * Retrieve the process group ID (PGID) using syscall.Getpgid().
+  * Assign the process to a new process group using `syscall.SysProcAttr{Setpgid: true}`.
+  * Retrieve the process group ID (PGID) using `syscall.Getpgid()`.
   * Send the SIGKILL signal to the process group (-PGID).
 
 * The associated cgroup is cleaned up. If the server shuts down, it ensures that all running jobs are terminated gracefully. A termination signal triggers cleanup procedures that remove jobs from memory, free allocated resources, and delete the corresponding cgroups. If a forced shutdown occurs, any remaining jobs might be left in an inconsistent state, requiring manual cleanup upon restart.
