@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package sentry;
+option go_package = "sentry/api/proto";
+
+service SentryService {
+  rpc StartJob (StartJobRequest) returns (StartJobResponse)  {}
+  rpc KillJob (KillJobRequest) returns (KillJobResponse) {}
+  rpc GetJobStatus (JobStatusRequest) returns (JobStatusResponse) {}
+  rpc StreamJobLogs (JobLogsRequest) returns (stream JobOutput) {}
+  rpc ListJobs (ListJobsRequest) returns (ListJobsResponse) {}
+}
+
+message StartJobRequest {
+  string command = 1;
+  repeated string commandArgs = 2;
+}
+
+message JobOutput {
+  string job_id = 1;
+  bytes data = 2;
+  bool is_stderr = 3;
+}
+
+message StartJobResponse{
+  string job_id = 1;
+}
+
+message StopJobRequest {
+  string job_id = 1;
+}
+
+message StopJobResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message JobStatusRequest {
+  string job_id = 1;
+}
+
+message JobStatusResponse {
+  bool is_running = 1;
+}
+
+message JobLogsRequest {
+  string job_id = 1;
+}
+
+message JobLogsResponse {
+  bytes logs = 1;
+}
+
+message ListJobsRequest {}
+
+message JobInfo {
+  string job_id = 1;
+  string command = 2;
+  bool is_running = 3;
+}
+
+message ListJobsResponse {
+  repeated JobInfo jobs = 1;
+}
+
+message KillJobRequest {
+  string job_id = 1;
+}
+
+message KillJobResponse {
+  bool success = 1;
+  string message = 2;
+}
