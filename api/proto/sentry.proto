@@ -14,6 +14,11 @@ service SentryService {
 message StartJobRequest {
   string command = 1;
   repeated string commandArgs = 2;
+  string memory_limit = 3;
+  string cpu_limit = 4;
+  string mount = 5;
+  string write_bps = 6;
+  string read_bps = 7;
 }
 
 message JobOutput {
@@ -57,6 +62,11 @@ message JobInfo {
   string job_id = 1;
   string command = 2;
   bool is_running = 3;
+  string memory_limit = 4;
+  string cpu_limit = 5;
+  string mount = 6;
+  string write_bps = 7;
+  string read_bps = 8;
 }
 
 message ListJobsResponse {

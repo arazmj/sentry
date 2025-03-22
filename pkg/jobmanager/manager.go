@@ -25,6 +25,12 @@ type Job struct {
 	stdoutHistory bytes.Buffer
 	stderrHistory bytes.Buffer
 	callbacks     []OutputCallback
+	MemoryLimit   string
+	CpuLimit      string
+	Mount         string
+	WriteBps      string
+	ReadBps       string
+	DeviceId      string
 }
 
 type JobManager struct {
@@ -44,19 +50,11 @@ const (
 	cgroupName     = "sentry-run"
 )
 
-const (
-	CHROOT      = ""
-	CpuLimit    = ""
-	MemoryLimit = ""
-	WriteBps    = ""
-	ReadBps     = ""
-)
-
 func getCgroupPath(jobID string) string {
 	return filepath.Join(cgroupBasePath, fmt.Sprintf("%s-%s", cgroupName, jobID))
 }
 
-func setLimits(pid int, jobID string) error {
+func setLimits(pid int, jobID, cpuLimit, memoryLimit, writeBps, readBps string) error {
 	cgroupPath := getCgroupPath(jobID)
 
 	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
@@ -70,23 +68,21 @@ func setLimits(pid int, jobID string) error {
 
 	}
 
-	// Set CPU limits
-	if CpuLimit != "" {
+	if cpuLimit != "" {
 		cpuPath := filepath.Join(cgroupPath, "cpu.max")
-		if err := os.WriteFile(cpuPath, []byte(CpuLimit), 0644); err != nil {
+		if err := os.WriteFile(cpuPath, []byte(cpuLimit), 0644); err != nil {
 			return fmt.Errorf("failed to set CPU cpu limit: %v", err)
 		}
 	}
 
-	// Set Memory limits
-	if MemoryLimit != "" {
+	if memoryLimit != "" {
 		memoryPath := filepath.Join(cgroupPath, "memory.max")
-		if err := os.WriteFile(memoryPath, []byte(MemoryLimit), 0644); err != nil {
+		if err := os.WriteFile(memoryPath, []byte(memoryLimit), 0644); err != nil {
 			return fmt.Errorf("failed to set memory memoryLimit: %v", err)
 		}
 	}
 
-	if WriteBps != "" || ReadBps != "" {
+	if writeBps != "" || readBps != "" {
 		// Get file system stats for the current working directory
 		var stat syscall.Stat_t
 		err := syscall.Stat("/", &stat) // Root filesystem
@@ -101,11 +97,11 @@ func setLimits(pid int, jobID string) error {
 		ioLimit := fmt.Sprintf("%d:%d", major, minor)
 
 		ioPath := filepath.Join(cgroupPath, "io.max")
-		if WriteBps != "" {
-			ioLimit += fmt.Sprintf(" wbps=%s", WriteBps)
+		if writeBps != "" {
+			ioLimit += fmt.Sprintf(" wbps=%s", writeBps)
 		}
-		if ReadBps != "" {
-			ioLimit += fmt.Sprintf(" rbps=%s", ReadBps)
+		if readBps != "" {
+			ioLimit += fmt.Sprintf(" rbps=%s", readBps)
 		}
 
 		if err := os.WriteFile(ioPath, []byte(ioLimit), 0644); err != nil {
@@ -127,13 +123,13 @@ func cleanupCgroup(job *Job) error {
 }
 
 // StartJob starts a new job and returns its ID
-func (m *JobManager) StartJob(command string, commandArgs []string) (*Job, error) {
+func (m *JobManager) StartJob(command string, commandArgs []string, memoryLimit, cpuLimit, mount, writeBps, readBps string) (*Job, error) {
 	cmd := exec.Command(command, commandArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	if CHROOT != "" {
+	if mount != "" {
 		//cmd.SysProcAttr.Cloneflags = syscall.CLONE_NEWNS
-		cmd.SysProcAttr.Chroot = CHROOT
+		cmd.SysProcAttr.Chroot = mount
 	}
 
 	stdout, err := cmd.StdoutPipe()
@@ -161,7 +157,7 @@ func (m *JobManager) StartJob(command string, commandArgs []string) (*Job, error
 	}
 	jobID := jobUUID.String()
 
-	if err := setLimits(cmd.Process.Pid, jobID); err != nil {
+	if err := setLimits(cmd.Process.Pid, jobID, cpuLimit, memoryLimit, writeBps, readBps); err != nil {
 		err := cmd.Process.Kill()
 		if err != nil {
 			return nil, err
@@ -170,13 +166,18 @@ func (m *JobManager) StartJob(command string, commandArgs []string) (*Job, error
 	}
 
 	job := &Job{
-		ID:        jobID,
-		PID:       cmd.Process.Pid,
-		Command:   command,
-		Cmd:       cmd,
-		Stdout:    stdout,
-		Stderr:    stderr,
-		callbacks: []OutputCallback{},
+		ID:          jobID,
+		PID:         cmd.Process.Pid,
+		Command:     command,
+		Cmd:         cmd,
+		Stdout:      stdout,
+		Stderr:      stderr,
+		callbacks:   []OutputCallback{},
+		MemoryLimit: memoryLimit,
+		CpuLimit:    cpuLimit,
+		Mount:       mount,
+		WriteBps:    writeBps,
+		ReadBps:     readBps,
 	}
 
 	go job.serveSubscribers()
@@ -230,6 +231,8 @@ func (m *JobManager) StreamOutput(ctx context.Context, jobID string, callback Ou
 	}
 
 	job := value.(*Job)
+
+	// Add callback for future output
 	job.callbacks = append(job.callbacks, callback)
 
 	doneCh := make(chan error, 1)
@@ -324,23 +327,11 @@ func (m *JobManager) KillJob(jobID string) error {
 
 	job := value.(*Job)
 
-	// Kill the entire process group
-	pgid, err := syscall.Getpgid(job.PID)
-	if err != nil {
-		return fmt.Errorf("error getting process group ID: %v", err)
-	}
-
-	// Send SIGKILL to the process group
-	// The minus sign before the process group ID tells the kernel
-	if err := syscall.Kill(-pgid, syscall.SIGKILL); err != nil {
-		return fmt.Errorf("error killing process group: %v", err)
-	}
-
 	if err := job.Cmd.Process.Signal(syscall.SIGKILL); err != nil {
 		return fmt.Errorf("failed to kill job %s: %v", jobID, err)
 	}
 
-	err = cleanupCgroup(job)
+	err := cleanupCgroup(job)
 	if err != nil {
 		return err
 	}

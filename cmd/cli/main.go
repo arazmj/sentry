@@ -38,6 +38,11 @@ func main() {
 	// Create separate FlagSets for each command
 	startFlags := flag.NewFlagSet("start", flag.ExitOnError)
 	startCmd := startFlags.String("cmd", "", "Command to execute")
+	startMemLimit := startFlags.String("memory-limit", "", "Memory limit (e.g., '100M', '1G')")
+	startCPULimit := startFlags.String("cpu-limit", "", "CPU limit in shares (e.g., '512')")
+	startMount := startFlags.String("mount", "", "Directory path to mount for the job")
+	startWriteBPS := startFlags.String("wbps-limit", "", "Write bytes per second limit (e.g., '1048576' for 1MB/s)")
+	startReadBPS := startFlags.String("rbps-limit", "", "Read bytes per second limit (e.g., '1048576' for 1MB/s)")
 
 	statusFlags := flag.NewFlagSet("status", flag.ExitOnError)
 	statusID := statusFlags.String("id", "", "Job ID")
@@ -109,6 +114,11 @@ func main() {
 		job, err := client.StartJob(ctx, &pb.StartJobRequest{
 			Command:     *startCmd,
 			CommandArgs: startFlags.Args(),
+			MemoryLimit: *startMemLimit,
+			CpuLimit:    *startCPULimit,
+			Mount:       *startMount,
+			WriteBps:    *startWriteBPS,
+			ReadBps:     *startReadBPS,
 		})
 		if err != nil {
 			log.Fatalf("Could not start job: %v", err)
@@ -182,9 +192,9 @@ func main() {
 			return
 		}
 
-		format := "%-40s %-10s %s\n"
-		fmt.Printf(format, "JOB ID", "STATUS", "COMMAND")
-		fmt.Println(strings.Repeat("-", 60))
+		format := "%-40s %-10s %-10s %-15s %-15s %-15s %s\n"
+		fmt.Printf(format, "JOB ID", "STATUS", "MEM-LIMIT", "CPU-LIMIT", "WRITE-BPS", "READ-BPS", "COMMAND")
+		fmt.Println(strings.Repeat("-", 120))
 
 		for _, job := range resp.Jobs {
 			status := "stopped"
@@ -192,7 +202,9 @@ func main() {
 				status = "running"
 			}
 
-			fmt.Printf(format, job.JobId, status, job.Command)
+			fmt.Printf(format,
+				job.JobId, status, job.MemoryLimit, job.CpuLimit,
+				job.WriteBps, job.ReadBps, job.Command)
 		}
 
 	case "kill":

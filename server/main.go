@@ -23,7 +23,7 @@ type server struct {
 }
 
 func (s *server) StartJob(ctx context.Context, req *pb.StartJobRequest) (*pb.StartJobResponse, error) {
-	job, err := s.manager.StartJob(req.Command, req.CommandArgs)
+	job, err := s.manager.StartJob(req.Command, req.CommandArgs, req.MemoryLimit, req.CpuLimit, req.Mount, req.WriteBps, req.ReadBps)
 	if err != nil {
 		log.Printf("Failed to start job %v", err)
 		return nil, err
@@ -86,9 +86,14 @@ func (s *server) ListJobs(ctx context.Context, req *pb.ListJobsRequest) (*pb.Lis
 	for _, job := range jobs {
 		isRunning, _ := s.manager.GetJobStatus(job.ID)
 		jobInfo := &pb.JobInfo{
-			JobId:     job.ID,
-			Command:   job.Command,
-			IsRunning: isRunning,
+			JobId:       job.ID,
+			Command:     job.Command,
+			IsRunning:   isRunning,
+			MemoryLimit: job.MemoryLimit,
+			CpuLimit:    job.CpuLimit,
+			Mount:       job.Mount,
+			ReadBps:     job.ReadBps,
+			WriteBps:    job.WriteBps,
 		}
 		response.Jobs = append(response.Jobs, jobInfo)
 	}
