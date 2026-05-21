@@ -151,9 +151,9 @@ func (m *JobManager) StartJob(command string, commandArgs []string, memoryLimit,
 
 	jobUUID, err := uuid.NewUUID()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate job uuid: %v", err)
 		stdout.Close()
 		stderr.Close()
+		return nil, fmt.Errorf("failed to generate job uuid: %v", err)
 	}
 	jobID := jobUUID.String()
 
