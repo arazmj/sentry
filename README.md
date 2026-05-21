@@ -190,6 +190,16 @@ sentry logs -id <job_id> -force
 sentry list
 ```
 
+## Running with Docker
+
+Place the server certificate, server key, and CA certificate in `certs/`, then start the server with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+The compose service runs in privileged mode with host cgroups so the server can manage cgroup resources.
+
 ## Project Layout
 
 ```text
