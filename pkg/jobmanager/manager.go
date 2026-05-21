@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +14,15 @@ import (
 	"sync"
 	"syscall"
 )
+
+var logger = slog.Default()
+
+// SetLogger sets the package logger used by the job manager.
+func SetLogger(l *slog.Logger) {
+	if l != nil {
+		logger = l
+	}
+}
 
 type Job struct {
 	ID            string
@@ -25,7 +34,7 @@ type Job struct {
 	stdoutHistory bytes.Buffer
 	stderrHistory bytes.Buffer
 	callbacks     []OutputCallback
-	callbacksMu   sync.Mutex
+	mu            sync.Mutex
 	MemoryLimit   string
 	CpuLimit      string
 	Mount         string
@@ -86,8 +95,7 @@ func setLimits(pid int, jobID, cpuLimit, memoryLimit, writeBps, readBps string) 
 	if writeBps != "" || readBps != "" {
 		// Get file system stats for the current working directory
 		var stat syscall.Stat_t
-		err := syscall.Stat("/", &stat) // Root filesystem
-		if err != nil {
+		if err := syscall.Stat("/", &stat); err != nil { // Root filesystem
 			return fmt.Errorf("failed to stat filesystem: %v", err)
 		}
 
@@ -161,7 +169,7 @@ func (m *JobManager) StartJob(command string, commandArgs []string, memoryLimit,
 	}
 	jobID := jobUUID.String()
 
-	if memoryLimit != "" || cpuLimit != "" || mount != "" || writeBps != "" || readBps != "" {
+	if memoryLimit != "" || cpuLimit != "" || writeBps != "" || readBps != "" {
 		if err := setLimits(cmd.Process.Pid, jobID, cpuLimit, memoryLimit, writeBps, readBps); err != nil {
 			if killErr := cmd.Process.Kill(); killErr != nil {
 				return nil, killErr
@@ -210,7 +218,7 @@ func (m *JobManager) StopJob(jobID string) error {
 
 	// Clean up cgroups
 	if err := cleanupCgroup(job); err != nil {
-		log.Printf("Warning: failed to clean up cgroups for job %s: %v", jobID, err)
+		logger.Warn("failed to clean up cgroups", "job_id", jobID, "pid", job.PID, "error", err)
 	}
 
 	return nil
@@ -240,9 +248,9 @@ func (m *JobManager) StreamOutput(ctx context.Context, jobID string, callback Ou
 	job := value.(*Job)
 
 	// Add callback for future output
-	job.callbacksMu.Lock()
+	job.mu.Lock()
 	job.callbacks = append(job.callbacks, callback)
-	job.callbacksMu.Unlock()
+	job.mu.Unlock()
 
 	doneCh := make(chan error, 1)
 
@@ -271,16 +279,14 @@ func (job *Job) serveSubscribers() {
 			n, err := reader.Read(buffer)
 			if n > 0 {
 				data := buffer[:n]
+				job.mu.Lock()
 				history.Write(data)
-
-				job.callbacksMu.Lock()
 				callbacks := append([]OutputCallback(nil), job.callbacks...)
-				job.callbacksMu.Unlock()
-
+				job.mu.Unlock()
 				for _, callback := range callbacks {
 					err := callback(data, isStderr)
 					if err != nil {
-						log.Printf("Warning: failed to send callback: %v", err)
+						logger.Warn("failed to send callback", "job_id", job.ID, "pid", job.PID, "error", err)
 						return
 					}
 				}
@@ -289,7 +295,7 @@ func (job *Job) serveSubscribers() {
 				break
 			}
 			if err != nil {
-				log.Printf("Error reading stdout: %v", err)
+				logger.Warn("failed to read job output", "job_id", job.ID, "pid", job.PID, "error", err)
 				break
 			}
 		}
@@ -304,7 +310,7 @@ func (job *Job) serveSubscribers() {
 	// Clean up after the job is complete
 	err := cleanupCgroup(job)
 	if err != nil {
-		log.Printf("Warning: failed to cleanup cgroup for job %s: %v", job.ID, err)
+		logger.Warn("failed to cleanup cgroup", "job_id", job.ID, "pid", job.PID, "error", err)
 	}
 
 	job.Stdout.Close()
@@ -319,7 +325,11 @@ func (m *JobManager) GetJobOutput(jobID string) (stdout, stderr []byte, err erro
 	}
 
 	job := value.(*Job)
-	return job.stdoutHistory.Bytes(), job.stderrHistory.Bytes(), nil
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	stdout = append([]byte(nil), job.stdoutHistory.Bytes()...)
+	stderr = append([]byte(nil), job.stderrHistory.Bytes()...)
+	return stdout, stderr, nil
 }
 
 // ListJobs returns a list of all jobs
@@ -363,7 +373,7 @@ func (m *JobManager) KillJobsAll() {
 	m.jobs.Range(func(key, value interface{}) bool {
 		job := value.(*Job)
 		if err := m.KillJob(job.ID); err != nil {
-			log.Printf("Warning: failed to kill job %s: %v", job.ID, err)
+			logger.Warn("failed to kill job during cleanup", "job_id", job.ID, "pid", job.PID, "error", err)
 		}
 		return true
 	})

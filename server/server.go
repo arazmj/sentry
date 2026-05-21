@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	pb "github.com/arazmj/sentry-run/api/proto"
 	"github.com/arazmj/sentry-run/pkg/jobmanager"
@@ -31,7 +31,7 @@ func NewServer(manager JobManager) *Server {
 func (s *Server) StartJob(ctx context.Context, req *pb.StartJobRequest) (*pb.StartJobResponse, error) {
 	job, err := s.manager.StartJob(req.Command, req.CommandArgs, req.MemoryLimit, req.CpuLimit, req.Mount, req.WriteBps, req.ReadBps)
 	if err != nil {
-		log.Printf("Failed to start job %v", err)
+		slog.Error("failed to start job", "error", err)
 		return nil, err
 	}
 	return &pb.StartJobResponse{
@@ -42,14 +42,14 @@ func (s *Server) StartJob(ctx context.Context, req *pb.StartJobRequest) (*pb.Sta
 func (s *Server) StopJob(ctx context.Context, req *pb.StopJobRequest) (*pb.StopJobResponse, error) {
 	err := s.manager.StopJob(req.JobId)
 	if err != nil {
-		log.Printf("Failed to stop job %s: %v", req.JobId, err)
+		slog.Error("failed to stop job", "job_id", req.JobId, "error", err)
 		return &pb.StopJobResponse{
 			Success: false,
 			Message: err.Error(),
 		}, nil
 	}
 
-	log.Printf("Stopped job %s", req.JobId)
+	slog.Info("stopped job", "job_id", req.JobId)
 	return &pb.StopJobResponse{
 		Success: true,
 		Message: fmt.Sprintf("Job %s stopped successfully", req.JobId),
@@ -59,7 +59,7 @@ func (s *Server) StopJob(ctx context.Context, req *pb.StopJobRequest) (*pb.StopJ
 func (s *Server) GetJobStatus(ctx context.Context, req *pb.JobStatusRequest) (*pb.JobStatusResponse, error) {
 	isRunning, err := s.manager.GetJobStatus(req.JobId)
 	if err != nil {
-		log.Printf("Failed to get job status %s: %v", req.JobId, err)
+		slog.Error("failed to get job status", "job_id", req.JobId, "error", err)
 		return &pb.JobStatusResponse{
 			IsRunning: false,
 		}, nil

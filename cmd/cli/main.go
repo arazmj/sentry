@@ -109,7 +109,9 @@ func main() {
 
 	switch command {
 	case "start":
-		startFlags.Parse(os.Args[2:])
+		if err := startFlags.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 		if *startCmd == "" {
 			log.Fatal("Command is required for start action. Use -cmd flag")
 		}
@@ -128,7 +130,9 @@ func main() {
 		}
 		fmt.Printf("Job ID: %v\n", job.JobId)
 	case "status":
-		statusFlags.Parse(os.Args[2:])
+		if err := statusFlags.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 		if *statusID == "" {
 			log.Fatal("Job ID is required for status action. Use -id flag")
 		}
@@ -146,7 +150,9 @@ func main() {
 		fmt.Printf("Job status: %s\n", status)
 
 	case "logs":
-		logsFlags.Parse(os.Args[2:])
+		if err := logsFlags.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 		if *logsID == "" {
 			log.Fatal("Job ID is required for logs action. Use -id flag")
 		}
@@ -211,7 +217,9 @@ func main() {
 		}
 
 	case "stop":
-		stopFlags.Parse(os.Args[2:])
+		if err := stopFlags.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 		if *stopID == "" {
 			log.Fatal("Job ID is required for stop action. Use -id flag")
 		}
@@ -224,7 +232,9 @@ func main() {
 		fmt.Printf("Stop job result: %s\n", resp.Message)
 
 	case "kill":
-		killFlags.Parse(os.Args[2:])
+		if err := killFlags.Parse(os.Args[2:]); err != nil {
+			log.Fatal(err)
+		}
 		if *killID == "" {
 			log.Fatal("Job ID is required for kill action. Use -id flag")
 		}
