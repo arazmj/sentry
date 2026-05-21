@@ -5,6 +5,7 @@ option go_package = "sentry/api/proto";
 
 service SentryService {
   rpc StartJob (StartJobRequest) returns (StartJobResponse)  {}
+  rpc StopJob (StopJobRequest) returns (StopJobResponse) {}
   rpc KillJob (KillJobRequest) returns (KillJobResponse) {}
   rpc GetJobStatus (JobStatusRequest) returns (JobStatusResponse) {}
   rpc StreamJobLogs (JobLogsRequest) returns (stream JobOutput) {}
