@@ -51,6 +51,9 @@ func main() {
 	logsID := logsFlags.String("id", "", "Job ID")
 	logsForce := logsFlags.Bool("force", false, "Stream logs in real-time")
 
+	stopFlags := flag.NewFlagSet("stop", flag.ExitOnError)
+	stopID := stopFlags.String("id", "", "Job ID")
+
 	killFlags := flag.NewFlagSet("kill", flag.ExitOnError)
 	killID := killFlags.String("id", "", "Job ID")
 
@@ -206,6 +209,19 @@ func main() {
 				job.JobId, status, job.MemoryLimit, job.CpuLimit,
 				job.WriteBps, job.ReadBps, job.Command)
 		}
+
+	case "stop":
+		stopFlags.Parse(os.Args[2:])
+		if *stopID == "" {
+			log.Fatal("Job ID is required for stop action. Use -id flag")
+		}
+		resp, err := client.StopJob(ctx, &pb.StopJobRequest{
+			JobId: *stopID,
+		})
+		if err != nil {
+			log.Fatalf("Could not stop job: %v", err)
+		}
+		fmt.Printf("Stop job result: %s\n", resp.Message)
 
 	case "kill":
 		killFlags.Parse(os.Args[2:])
