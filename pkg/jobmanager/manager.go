@@ -116,6 +116,9 @@ func cleanupCgroup(job *Job) error {
 
 	// The cgroup dir can only be deleted by rmdir syscall
 	if err := syscall.Rmdir(cgroupPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return fmt.Errorf("failed to remove cgroup directory %s: %v", cgroupPath, err)
 	}
 
@@ -151,18 +154,20 @@ func (m *JobManager) StartJob(command string, commandArgs []string, memoryLimit,
 
 	jobUUID, err := uuid.NewUUID()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate job uuid: %v", err)
 		stdout.Close()
 		stderr.Close()
+		return nil, fmt.Errorf("failed to generate job uuid: %v", err)
 	}
 	jobID := jobUUID.String()
 
-	if err := setLimits(cmd.Process.Pid, jobID, cpuLimit, memoryLimit, writeBps, readBps); err != nil {
-		err := cmd.Process.Kill()
-		if err != nil {
-			return nil, err
+	if memoryLimit != "" || cpuLimit != "" || mount != "" || writeBps != "" || readBps != "" {
+		if err := setLimits(cmd.Process.Pid, jobID, cpuLimit, memoryLimit, writeBps, readBps); err != nil {
+			err := cmd.Process.Kill()
+			if err != nil {
+				return nil, err
+			}
+			return nil, fmt.Errorf("failed to set limits: %v", err)
 		}
-		return nil, fmt.Errorf("failed to set limits: %v", err)
 	}
 
 	job := &Job{
