@@ -14,6 +14,9 @@ import (
 	"github.com/arazmj/sentry-run/pkg/jobmanager"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -53,6 +56,13 @@ func main() {
 	}
 
 	s := grpc.NewServer(grpc.Creds(creds))
+
+	healthServer := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(s, healthServer)
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus("sentry.SentryService", grpc_health_v1.HealthCheckResponse_SERVING)
+	reflection.Register(s)
+
 	manager := jobmanager.New()
 	srv := NewServer(manager)
 	pb.RegisterSentryServiceServer(s, srv)
@@ -65,6 +75,7 @@ func main() {
 	go func() {
 		<-sigChan
 		fmt.Println("\nReceived interrupt signal. Cleaning up...")
+		healthServer.Shutdown()
 		manager.KillJobsAll()
 		os.Exit(0)
 	}()

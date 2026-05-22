@@ -137,7 +137,13 @@ bash script/gen_cert.sh
 ./bin/sentry-server
 ```
 
-The server listens on port 50051 by default.
+The server listens on port 50051 by default and exposes the standard gRPC health service and reflection.
+
+Probe readiness with mutual TLS:
+
+```bash
+grpc_health_probe -addr=localhost:50051 -tls -tls-ca-cert ca.crt -tls-client-cert client.crt -tls-client-key client.key
+```
 
 ### Using the CLI
 
