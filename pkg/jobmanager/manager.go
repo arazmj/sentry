@@ -25,6 +25,7 @@ type Job struct {
 	stdoutHistory bytes.Buffer
 	stderrHistory bytes.Buffer
 	callbacks     []OutputCallback
+	callbacksMu   sync.Mutex
 	MemoryLimit   string
 	CpuLimit      string
 	Mount         string
@@ -87,7 +88,7 @@ func setLimits(pid int, jobID, cpuLimit, memoryLimit, writeBps, readBps string) 
 		var stat syscall.Stat_t
 		err := syscall.Stat("/", &stat) // Root filesystem
 		if err != nil {
-			log.Fatalf("Failed to stat filesystem: %v", err)
+			return fmt.Errorf("failed to stat filesystem: %v", err)
 		}
 
 		// Extract major and minor device numbers
@@ -162,9 +163,8 @@ func (m *JobManager) StartJob(command string, commandArgs []string, memoryLimit,
 
 	if memoryLimit != "" || cpuLimit != "" || mount != "" || writeBps != "" || readBps != "" {
 		if err := setLimits(cmd.Process.Pid, jobID, cpuLimit, memoryLimit, writeBps, readBps); err != nil {
-			err := cmd.Process.Kill()
-			if err != nil {
-				return nil, err
+			if killErr := cmd.Process.Kill(); killErr != nil {
+				return nil, killErr
 			}
 			return nil, fmt.Errorf("failed to set limits: %v", err)
 		}
@@ -191,7 +191,9 @@ func (m *JobManager) StartJob(command string, commandArgs []string, memoryLimit,
 	return job, nil
 }
 
-// StopJob stops a running job
+// StopJob stops a running job.
+// Closing stdout/stderr here may race with serveSubscribers reads; fixing that
+// requires a broader lifecycle refactor and is intentionally out of scope.
 func (m *JobManager) StopJob(jobID string) error {
 	value, exists := m.jobs.LoadAndDelete(jobID)
 	if !exists {
@@ -238,7 +240,9 @@ func (m *JobManager) StreamOutput(ctx context.Context, jobID string, callback Ou
 	job := value.(*Job)
 
 	// Add callback for future output
+	job.callbacksMu.Lock()
 	job.callbacks = append(job.callbacks, callback)
+	job.callbacksMu.Unlock()
 
 	doneCh := make(chan error, 1)
 
@@ -268,7 +272,12 @@ func (job *Job) serveSubscribers() {
 			if n > 0 {
 				data := buffer[:n]
 				history.Write(data)
-				for _, callback := range job.callbacks {
+
+				job.callbacksMu.Lock()
+				callbacks := append([]OutputCallback(nil), job.callbacks...)
+				job.callbacksMu.Unlock()
+
+				for _, callback := range callbacks {
 					err := callback(data, isStderr)
 					if err != nil {
 						log.Printf("Warning: failed to send callback: %v", err)
@@ -324,6 +333,9 @@ func (m *JobManager) ListJobs() []*Job {
 	return jobs
 }
 
+// KillJob forcefully terminates a running job.
+// Closing stdout/stderr here may race with serveSubscribers reads; fixing that
+// requires a broader lifecycle refactor and is intentionally out of scope.
 func (m *JobManager) KillJob(jobID string) error {
 	value, exists := m.jobs.LoadAndDelete(jobID)
 	if !exists {
@@ -350,7 +362,9 @@ func (m *JobManager) KillJob(jobID string) error {
 func (m *JobManager) KillJobsAll() {
 	m.jobs.Range(func(key, value interface{}) bool {
 		job := value.(*Job)
-		m.KillJob(job.ID)
+		if err := m.KillJob(job.ID); err != nil {
+			log.Printf("Warning: failed to kill job %s: %v", job.ID, err)
+		}
 		return true
 	})
 }
