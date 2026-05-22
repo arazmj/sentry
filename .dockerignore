@@ -1,0 +1,10 @@
+.git
+bin/
+*.test
+*.out
+certs/
+.github/
+*.md
+!README.md
+docker-compose.yml
+Dockerfile

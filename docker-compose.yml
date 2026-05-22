@@ -1,0 +1,14 @@
+services:
+  sentry-server:
+    build: .
+    privileged: true
+    cgroup: host
+    volumes:
+      - ./certs:/certs:ro
+    environment:
+      SENTRY_SERVER_CERT: /certs/server.crt
+      SENTRY_SERVER_KEY: /certs/server.key
+      SENTRY_CA_CERT: /certs/ca.crt
+    ports:
+      - "50051:50051"
+    restart: unless-stopped
