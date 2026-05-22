@@ -134,10 +134,19 @@ bash script/gen_cert.sh
 ### Starting the Server
 
 ```bash
-./bin/sentry-server
+./bin/sentry-server [options]
 ```
 
-The server listens on port 50051 by default and exposes the standard gRPC health service and reflection.
+The server listens on port 50051 by default and exposes the standard gRPC health service and reflection. Options can also be set with environment variables when the corresponding flag is left at its default value.
+
+Options:
+
+```text
+  -port int      Port to listen on (default 50051, env SENTRY_PORT)
+  -cert string   Server certificate path (default "certs/server.crt", env SENTRY_SERVER_CERT)
+  -key string    Server private key path (default "certs/server.key", env SENTRY_SERVER_KEY)
+  -ca string     CA certificate path (default "certs/ca.crt", env SENTRY_CA_CERT)
+```
 
 Probe readiness with mutual TLS:
 
@@ -146,6 +155,17 @@ grpc_health_probe -addr=localhost:50051 -tls -tls-ca-cert ca.crt -tls-client-cer
 ```
 
 ### Using the CLI
+
+The CLI supports global options before the subcommand. Options can also be set with environment variables when the corresponding flag is left at its default value.
+
+Global options:
+
+```text
+  -server string  Sentry server address (default "localhost:50051", env SENTRY_SERVER)
+  -cert string    Client certificate path (default "certs/client.crt", env SENTRY_CLIENT_CERT)
+  -key string     Client private key path (default "certs/client.key", env SENTRY_CLIENT_KEY)
+  -ca string      CA certificate path (default "certs/ca.crt", env SENTRY_CA_CERT)
+```
 
 The CLI supports the following commands:
 
@@ -170,7 +190,10 @@ Options:
 # List all jobs
 sentry list
 
-# Kill a job
+# Stop a job gracefully
+sentry stop -id <job_id>
+
+# Kill a job with SIGKILL
 sentry kill -id <job_id>
 ```
 
@@ -191,6 +214,9 @@ sentry start -cmd /bin/sh -wbps-limit 1048576 -- -c "dd if=/dev/zero of=./sentry
 
 # Monitor job logs in real-time
 sentry logs -id <job_id> -force
+
+# Stop a job gracefully
+sentry stop -id <job_id>
 
 # List all running jobs
 sentry list
