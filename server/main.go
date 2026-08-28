@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	pb "github.com/arazmj/sentry-run/api/proto"
 	"github.com/arazmj/sentry-run/pkg/jobmanager"
@@ -99,18 +100,31 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Start signal handler
 	go func() {
-		<-sigChan
-		slog.Info("received interrupt signal, cleaning up")
+		sig := <-sigChan
+		signal.Stop(sigChan)
+		slog.Info("received shutdown signal", "signal", sig)
 		healthServer.Shutdown()
-		manager.KillJobsAll()
-		os.Exit(0)
+
+		forceStop := time.AfterFunc(30*time.Second, func() {
+			slog.Warn("graceful shutdown timed out; forcing gRPC server stop", "timeout", 30*time.Second)
+			s.Stop()
+		})
+		defer forceStop.Stop()
+
+		s.GracefulStop()
+		slog.Info("gRPC server stopped gracefully")
 	}()
 
 	slog.Info("server listening", "port", port)
 	if err := s.Serve(lis); err != nil {
-		slog.Error("failed to serve", "error", err)
-		os.Exit(1)
+		if err != grpc.ErrServerStopped {
+			slog.Error("failed to serve", "error", err)
+			os.Exit(1)
+		}
 	}
+
+	slog.Info("cleaning up remaining jobs and cgroups")
+	manager.KillJobsAll()
+	slog.Info("shutdown cleanup complete")
 }

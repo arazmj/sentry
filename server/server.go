@@ -13,6 +13,7 @@ type JobManager interface {
 	StartJob(command string, commandArgs []string, memoryLimit, cpuLimit, mount, writeBps, readBps string) (*jobmanager.Job, error)
 	StopJob(jobID string) error
 	KillJob(jobID string) error
+	KillJobsAll()
 	GetJobStatus(jobID string) (bool, error)
 	GetJobOutput(jobID string) (stdout, stderr []byte, err error)
 	ListJobs() []*jobmanager.Job

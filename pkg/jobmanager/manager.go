@@ -278,7 +278,7 @@ func (job *Job) serveSubscribers() {
 		for {
 			n, err := reader.Read(buffer)
 			if n > 0 {
-				data := buffer[:n]
+				data := append([]byte(nil), buffer[:n]...)
 				job.mu.Lock()
 				history.Write(data)
 				callbacks := append([]OutputCallback(nil), job.callbacks...)
