@@ -3,13 +3,12 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
+	"strings"
 	"syscall"
 
 	pb "github.com/arazmj/sentry-run/api/proto"
@@ -21,64 +20,58 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+func buildLogger() *slog.Logger {
+	var level slog.Level
+	switch strings.ToLower(os.Getenv("SENTRY_LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info", "":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	if os.Getenv("SENTRY_LOG_JSON") == "1" {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, opts))
+}
+
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.LUTC | log.Lshortfile)
-	log.SetOutput(os.Stdout)
+	logger := buildLogger()
+	slog.SetDefault(logger)
+	jobmanager.SetLogger(logger)
 
-	const (
-		defaultPort       = 50051
-		defaultServerCert = "certs/server.crt"
-		defaultServerKey  = "certs/server.key"
-		defaultCACert     = "certs/ca.crt"
-	)
-
-	port := flag.Int("port", defaultPort, "Port to listen on")
-	serverCertPath := flag.String("cert", defaultServerCert, "Server certificate path")
-	serverKeyPath := flag.String("key", defaultServerKey, "Server private key path")
-	caCertPath := flag.String("ca", defaultCACert, "CA certificate path")
-	flag.Parse()
-
-	if *port == defaultPort {
-		if envPort := os.Getenv("SENTRY_PORT"); envPort != "" {
-			parsedPort, err := strconv.Atoi(envPort)
-			if err != nil {
-				log.Fatalf("Invalid SENTRY_PORT %q: %v", envPort, err)
-			}
-			*port = parsedPort
-		}
-	}
-	if *serverCertPath == defaultServerCert {
-		if envCert := os.Getenv("SENTRY_SERVER_CERT"); envCert != "" {
-			*serverCertPath = envCert
-		}
-	}
-	if *serverKeyPath == defaultServerKey {
-		if envKey := os.Getenv("SENTRY_SERVER_KEY"); envKey != "" {
-			*serverKeyPath = envKey
-		}
-	}
-	if *caCertPath == defaultCACert {
-		if envCA := os.Getenv("SENTRY_CA_CERT"); envCA != "" {
-			*caCertPath = envCA
-		}
+	config, err := parseServerConfig(os.Args[1:], os.LookupEnv)
+	if err != nil {
+		slog.Error("invalid server configuration", "error", err)
+		os.Exit(1)
 	}
 
 	// Load server certificate and private key
-	serverCert, err := tls.LoadX509KeyPair(*serverCertPath, *serverKeyPath)
+	serverCert, err := tls.LoadX509KeyPair(config.ServerCertPath, config.ServerKeyPath)
 	if err != nil {
-		log.Fatalf("Failed to load server certificates: %v", err)
+		slog.Error("failed to load server certificates", "error", err)
+		os.Exit(1)
 	}
 
 	// Load CA certificate
-	caCert, err := os.ReadFile(*caCertPath)
+	caCert, err := os.ReadFile(config.CACertPath)
 	if err != nil {
-		log.Fatalf("Failed to load CA certificate: %v", err)
+		slog.Error("failed to load CA certificate", "error", err)
+		os.Exit(1)
 	}
 
 	// Create certificate pool and append CA certificate
 	certPool := x509.NewCertPool()
 	if !certPool.AppendCertsFromPEM(caCert) {
-		log.Fatal("Failed to append CA certificate to pool")
+		slog.Error("failed to append CA certificate to pool")
+		os.Exit(1)
 	}
 
 	// Create TLS credentials
@@ -89,9 +82,10 @@ func main() {
 	}
 	creds := credentials.NewTLS(tlsConfig)
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Port))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		slog.Error("failed to listen", "error", err)
+		os.Exit(1)
 	}
 
 	s := grpc.NewServer(grpc.Creds(creds))
@@ -110,17 +104,28 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Start signal handler
 	go func() {
-		<-sigChan
-		fmt.Println("\nReceived interrupt signal. Cleaning up...")
+		sig := <-sigChan
+		signal.Stop(sigChan)
+		slog.Info("received shutdown signal", "signal", sig)
 		healthServer.Shutdown()
-		manager.KillJobsAll()
-		os.Exit(0)
+
+		if gracefulShutdown(s, gracefulShutdownTimeout) {
+			slog.Info("gRPC server stopped gracefully")
+		} else {
+			slog.Warn("gRPC server stopped forcefully")
+		}
 	}()
 
-	log.Printf("Server listening on port %d", *port)
+	slog.Info("server listening", "port", config.Port)
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
+		if err != grpc.ErrServerStopped {
+			slog.Error("failed to serve", "error", err)
+			os.Exit(1)
+		}
 	}
+
+	slog.Info("cleaning up remaining jobs and cgroups")
+	manager.KillJobsAll()
+	slog.Info("shutdown cleanup complete")
 }

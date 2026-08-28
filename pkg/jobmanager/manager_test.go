@@ -4,18 +4,10 @@ package jobmanager
 
 import (
 	"context"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
-
-func skipWindows(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("requires POSIX commands")
-	}
-}
 
 func TestNewReturnsManager(t *testing.T) {
 	if New() == nil {
@@ -24,14 +16,16 @@ func TestNewReturnsManager(t *testing.T) {
 }
 
 func TestStartJobNoLimitsCapturesOutputAndListsJob(t *testing.T) {
-	skipWindows(t)
-
 	manager := New()
 	job, err := manager.StartJob("/bin/echo", []string{"hello"}, "", "", "", "", "")
 	if err != nil {
 		t.Fatalf("StartJob() error = %v", err)
 	}
-	defer job.Cmd.Wait()
+	defer func() {
+		if err := job.Cmd.Wait(); err != nil {
+			t.Logf("waiting for job exit: %v", err)
+		}
+	}()
 
 	if job.ID == "" {
 		t.Fatal("StartJob() returned job with empty ID")
@@ -90,8 +84,6 @@ func TestUnknownJobErrors(t *testing.T) {
 }
 
 func TestGetJobStatusReturnsFalseAfterExit(t *testing.T) {
-	skipWindows(t)
-
 	manager := New()
 	job, err := manager.StartJob("/bin/sh", []string{"-c", "exit 0"}, "", "", "", "", "")
 	if err != nil {

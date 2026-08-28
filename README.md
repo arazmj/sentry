@@ -137,12 +137,12 @@ bash script/gen_cert.sh
 ./bin/sentry-server [options]
 ```
 
-The server listens on port 50051 by default and exposes the standard gRPC health service and reflection. Options can also be set with environment variables when the corresponding flag is left at its default value.
+The server listens on port 50051 by default and exposes the standard gRPC health service and reflection. Environment variables provide defaults, and command-line flags take precedence.
 
 Options:
 
 ```text
-  -port int      Port to listen on (default 50051, env SENTRY_PORT)
+  -port int      Port to listen on, from 1 to 65535 (default 50051, env SENTRY_PORT)
   -cert string   Server certificate path (default "certs/server.crt", env SENTRY_SERVER_CERT)
   -key string    Server private key path (default "certs/server.key", env SENTRY_SERVER_KEY)
   -ca string     CA certificate path (default "certs/ca.crt", env SENTRY_CA_CERT)
@@ -156,7 +156,7 @@ grpc_health_probe -addr=localhost:50051 -tls -tls-ca-cert ca.crt -tls-client-cer
 
 ### Using the CLI
 
-The CLI supports global options before the subcommand. Options can also be set with environment variables when the corresponding flag is left at its default value.
+The CLI supports global options before the subcommand. Environment variables provide defaults, and command-line flags take precedence.
 
 Global options:
 

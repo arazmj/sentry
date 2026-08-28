@@ -20,42 +20,11 @@ import (
 )
 
 func main() {
-	const (
-		defaultServerAddr = "localhost:50051"
-		defaultClientCert = "certs/client.crt"
-		defaultClientKey  = "certs/client.key"
-		defaultCACert     = "certs/ca.crt"
-	)
-
-	globalFlags := flag.NewFlagSet("cli", flag.ExitOnError)
-	serverAddr := globalFlags.String("server", defaultServerAddr, "Sentry server address")
-	clientCertPath := globalFlags.String("cert", defaultClientCert, "Client certificate path")
-	clientKeyPath := globalFlags.String("key", defaultClientKey, "Client private key path")
-	caCertPath := globalFlags.String("ca", defaultCACert, "CA certificate path")
-	globalFlags.Parse(os.Args[1:])
-
-	if *serverAddr == defaultServerAddr {
-		if envServer := os.Getenv("SENTRY_SERVER"); envServer != "" {
-			*serverAddr = envServer
-		}
+	config, args, err := parseCLIConfig(os.Args[1:], os.LookupEnv)
+	if err != nil {
+		log.Fatal(err)
 	}
-	if *clientCertPath == defaultClientCert {
-		if envCert := os.Getenv("SENTRY_CLIENT_CERT"); envCert != "" {
-			*clientCertPath = envCert
-		}
-	}
-	if *clientKeyPath == defaultClientKey {
-		if envKey := os.Getenv("SENTRY_CLIENT_KEY"); envKey != "" {
-			*clientKeyPath = envKey
-		}
-	}
-	if *caCertPath == defaultCACert {
-		if envCA := os.Getenv("SENTRY_CA_CERT"); envCA != "" {
-			*caCertPath = envCA
-		}
-	}
-
-	if globalFlags.NArg() < 1 {
+	if len(args) < 1 {
 		fmt.Println("Usage: cli [global options] <command> [options]")
 		fmt.Println("Commands:")
 		fmt.Println("  start   Start a new job")
@@ -67,8 +36,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	command := globalFlags.Arg(0)
-	commandArgs := globalFlags.Args()[1:]
+	command := args[0]
+	commandArgs := args[1:]
 
 	// Create separate FlagSets for each command
 	startFlags := flag.NewFlagSet("start", flag.ExitOnError)
@@ -108,13 +77,13 @@ func main() {
 	}()
 
 	// Load client certificate and private key
-	clientCert, err := tls.LoadX509KeyPair(*clientCertPath, *clientKeyPath)
+	clientCert, err := tls.LoadX509KeyPair(config.ClientCertPath, config.ClientKeyPath)
 	if err != nil {
 		log.Fatalf("Failed to load client certificates: %v", err)
 	}
 
 	// Load CA certificate
-	caCert, err := os.ReadFile(*caCertPath)
+	caCert, err := os.ReadFile(config.CACertPath)
 	if err != nil {
 		log.Fatalf("Failed to load CA certificate: %v", err)
 	}
@@ -132,7 +101,7 @@ func main() {
 	}
 	creds := credentials.NewTLS(tlsConfig)
 
-	conn, err := grpc.NewClient(*serverAddr,
+	conn, err := grpc.NewClient(config.ServerAddr,
 		grpc.WithTransportCredentials(creds),
 	)
 	if err != nil {
@@ -144,7 +113,9 @@ func main() {
 
 	switch command {
 	case "start":
-		startFlags.Parse(commandArgs)
+		if err := startFlags.Parse(commandArgs); err != nil {
+			log.Fatal(err)
+		}
 		if *startCmd == "" {
 			log.Fatal("Command is required for start action. Use -cmd flag")
 		}
@@ -163,7 +134,9 @@ func main() {
 		}
 		fmt.Printf("Job ID: %v\n", job.JobId)
 	case "status":
-		statusFlags.Parse(commandArgs)
+		if err := statusFlags.Parse(commandArgs); err != nil {
+			log.Fatal(err)
+		}
 		if *statusID == "" {
 			log.Fatal("Job ID is required for status action. Use -id flag")
 		}
@@ -181,7 +154,9 @@ func main() {
 		fmt.Printf("Job status: %s\n", status)
 
 	case "logs":
-		logsFlags.Parse(commandArgs)
+		if err := logsFlags.Parse(commandArgs); err != nil {
+			log.Fatal(err)
+		}
 		if *logsID == "" {
 			log.Fatal("Job ID is required for logs action. Use -id flag")
 		}
@@ -246,7 +221,9 @@ func main() {
 		}
 
 	case "stop":
-		stopFlags.Parse(commandArgs)
+		if err := stopFlags.Parse(commandArgs); err != nil {
+			log.Fatal(err)
+		}
 		if *stopID == "" {
 			log.Fatal("Job ID is required for stop action. Use -id flag")
 		}
@@ -259,7 +236,9 @@ func main() {
 		fmt.Printf("Stop job result: %s\n", resp.Message)
 
 	case "kill":
-		killFlags.Parse(commandArgs)
+		if err := killFlags.Parse(commandArgs); err != nil {
+			log.Fatal(err)
+		}
 		if *killID == "" {
 			log.Fatal("Job ID is required for kill action. Use -id flag")
 		}

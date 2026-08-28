@@ -44,6 +44,7 @@ func (f *fakeJobManager) StartJob(command string, commandArgs []string, memoryLi
 }
 func (f *fakeJobManager) StopJob(jobID string) error { f.stoppedJob = jobID; return f.stopErr }
 func (f *fakeJobManager) KillJob(jobID string) error { f.killedJob = jobID; return f.killErr }
+func (f *fakeJobManager) KillJobsAll()               {}
 func (f *fakeJobManager) GetJobStatus(jobID string) (bool, error) {
 	f.statusCalls = append(f.statusCalls, jobID)
 	if f.statusErr != nil {
