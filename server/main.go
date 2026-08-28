@@ -4,10 +4,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,26 +21,52 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+func buildLogger() *slog.Logger {
+	var level slog.Level
+	switch strings.ToLower(os.Getenv("SENTRY_LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "info", "":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	if os.Getenv("SENTRY_LOG_JSON") == "1" {
+		return slog.New(slog.NewJSONHandler(os.Stdout, opts))
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, opts))
+}
+
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.LUTC | log.Lshortfile)
-	log.SetOutput(os.Stdout)
+	logger := buildLogger()
+	slog.SetDefault(logger)
+	jobmanager.SetLogger(logger)
 
 	// Load server certificate and private key
 	serverCert, err := tls.LoadX509KeyPair("certs/server.crt", "certs/server.key")
 	if err != nil {
-		log.Fatalf("Failed to load server certificates: %v", err)
+		slog.Error("failed to load server certificates", "error", err)
+		os.Exit(1)
 	}
 
 	// Load CA certificate
 	caCert, err := os.ReadFile("certs/ca.crt")
 	if err != nil {
-		log.Fatalf("Failed to load CA certificate: %v", err)
+		slog.Error("failed to load CA certificate", "error", err)
+		os.Exit(1)
 	}
 
 	// Create certificate pool and append CA certificate
 	certPool := x509.NewCertPool()
 	if !certPool.AppendCertsFromPEM(caCert) {
-		log.Fatal("Failed to append CA certificate to pool")
+		slog.Error("failed to append CA certificate to pool")
+		os.Exit(1)
 	}
 
 	// Create TLS credentials
@@ -53,7 +80,8 @@ func main() {
 	port := 50051
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		slog.Error("failed to listen", "error", err)
+		os.Exit(1)
 	}
 
 	s := grpc.NewServer(grpc.Creds(creds))
@@ -74,32 +102,29 @@ func main() {
 
 	go func() {
 		sig := <-sigChan
-		log.Printf("Received %s signal; starting graceful shutdown", sig)
 		signal.Stop(sigChan)
-
+		slog.Info("received shutdown signal", "signal", sig)
 		healthServer.Shutdown()
 
 		forceStop := time.AfterFunc(30*time.Second, func() {
-			log.Printf("Graceful shutdown timed out after 30s; forcing gRPC server stop")
+			slog.Warn("graceful shutdown timed out; forcing gRPC server stop", "timeout", 30*time.Second)
 			s.Stop()
 		})
 		defer forceStop.Stop()
 
 		s.GracefulStop()
-		log.Printf("gRPC server stopped gracefully")
-		manager.KillJobsAll()
+		slog.Info("gRPC server stopped gracefully")
 	}()
 
-	log.Printf("Server listening on port %d", port)
+	slog.Info("server listening", "port", port)
 	if err := s.Serve(lis); err != nil {
-		if err == grpc.ErrServerStopped {
-			log.Printf("gRPC server stopped")
-		} else {
-			log.Fatalf("failed to serve: %v", err)
+		if err != grpc.ErrServerStopped {
+			slog.Error("failed to serve", "error", err)
+			os.Exit(1)
 		}
 	}
 
-	log.Printf("Cleaning up remaining jobs and cgroups")
-	srv.manager.KillJobsAll()
-	log.Printf("Shutdown cleanup complete")
+	slog.Info("cleaning up remaining jobs and cgroups")
+	manager.KillJobsAll()
+	slog.Info("shutdown cleanup complete")
 }

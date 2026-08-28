@@ -6,8 +6,8 @@ proto:
 		api/proto/sentry.proto
 
 build:
-	go build -o bin/sentry-server server/main.go
-	go build -o bin/sentry cmd/cli/main.go
+	go build -o bin/sentry-server ./server
+	go build -o bin/sentry ./cmd/cli
 
 run: build
 	./bin/sentry-server
