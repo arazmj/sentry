@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"time"
 
 	pb "github.com/arazmj/sentry-run/api/proto"
 	"github.com/arazmj/sentry-run/pkg/jobmanager"
@@ -48,15 +47,21 @@ func main() {
 	slog.SetDefault(logger)
 	jobmanager.SetLogger(logger)
 
+	config, err := parseServerConfig(os.Args[1:], os.LookupEnv)
+	if err != nil {
+		slog.Error("invalid server configuration", "error", err)
+		os.Exit(1)
+	}
+
 	// Load server certificate and private key
-	serverCert, err := tls.LoadX509KeyPair("certs/server.crt", "certs/server.key")
+	serverCert, err := tls.LoadX509KeyPair(config.ServerCertPath, config.ServerKeyPath)
 	if err != nil {
 		slog.Error("failed to load server certificates", "error", err)
 		os.Exit(1)
 	}
 
 	// Load CA certificate
-	caCert, err := os.ReadFile("certs/ca.crt")
+	caCert, err := os.ReadFile(config.CACertPath)
 	if err != nil {
 		slog.Error("failed to load CA certificate", "error", err)
 		os.Exit(1)
@@ -77,8 +82,7 @@ func main() {
 	}
 	creds := credentials.NewTLS(tlsConfig)
 
-	port := 50051
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", config.Port))
 	if err != nil {
 		slog.Error("failed to listen", "error", err)
 		os.Exit(1)
@@ -106,17 +110,14 @@ func main() {
 		slog.Info("received shutdown signal", "signal", sig)
 		healthServer.Shutdown()
 
-		forceStop := time.AfterFunc(30*time.Second, func() {
-			slog.Warn("graceful shutdown timed out; forcing gRPC server stop", "timeout", 30*time.Second)
-			s.Stop()
-		})
-		defer forceStop.Stop()
-
-		s.GracefulStop()
-		slog.Info("gRPC server stopped gracefully")
+		if gracefulShutdown(s, gracefulShutdownTimeout) {
+			slog.Info("gRPC server stopped gracefully")
+		} else {
+			slog.Warn("gRPC server stopped forcefully")
+		}
 	}()
 
-	slog.Info("server listening", "port", port)
+	slog.Info("server listening", "port", config.Port)
 	if err := s.Serve(lis); err != nil {
 		if err != grpc.ErrServerStopped {
 			slog.Error("failed to serve", "error", err)

@@ -20,8 +20,12 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: cli <command> [options]")
+	config, args, err := parseCLIConfig(os.Args[1:], os.LookupEnv)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(args) < 1 {
+		fmt.Println("Usage: cli [global options] <command> [options]")
 		fmt.Println("Commands:")
 		fmt.Println("  start   Start a new job")
 		fmt.Println("  stop    Stop a running job")
@@ -32,8 +36,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
-	serverAddr := "localhost:50051"
+	command := args[0]
+	commandArgs := args[1:]
 
 	// Create separate FlagSets for each command
 	startFlags := flag.NewFlagSet("start", flag.ExitOnError)
@@ -73,13 +77,13 @@ func main() {
 	}()
 
 	// Load client certificate and private key
-	clientCert, err := tls.LoadX509KeyPair("certs/client.crt", "certs/client.key")
+	clientCert, err := tls.LoadX509KeyPair(config.ClientCertPath, config.ClientKeyPath)
 	if err != nil {
 		log.Fatalf("Failed to load client certificates: %v", err)
 	}
 
 	// Load CA certificate
-	caCert, err := os.ReadFile("certs/ca.crt")
+	caCert, err := os.ReadFile(config.CACertPath)
 	if err != nil {
 		log.Fatalf("Failed to load CA certificate: %v", err)
 	}
@@ -97,7 +101,7 @@ func main() {
 	}
 	creds := credentials.NewTLS(tlsConfig)
 
-	conn, err := grpc.NewClient(serverAddr,
+	conn, err := grpc.NewClient(config.ServerAddr,
 		grpc.WithTransportCredentials(creds),
 	)
 	if err != nil {
@@ -109,7 +113,7 @@ func main() {
 
 	switch command {
 	case "start":
-		if err := startFlags.Parse(os.Args[2:]); err != nil {
+		if err := startFlags.Parse(commandArgs); err != nil {
 			log.Fatal(err)
 		}
 		if *startCmd == "" {
@@ -130,7 +134,7 @@ func main() {
 		}
 		fmt.Printf("Job ID: %v\n", job.JobId)
 	case "status":
-		if err := statusFlags.Parse(os.Args[2:]); err != nil {
+		if err := statusFlags.Parse(commandArgs); err != nil {
 			log.Fatal(err)
 		}
 		if *statusID == "" {
@@ -150,7 +154,7 @@ func main() {
 		fmt.Printf("Job status: %s\n", status)
 
 	case "logs":
-		if err := logsFlags.Parse(os.Args[2:]); err != nil {
+		if err := logsFlags.Parse(commandArgs); err != nil {
 			log.Fatal(err)
 		}
 		if *logsID == "" {
@@ -217,7 +221,7 @@ func main() {
 		}
 
 	case "stop":
-		if err := stopFlags.Parse(os.Args[2:]); err != nil {
+		if err := stopFlags.Parse(commandArgs); err != nil {
 			log.Fatal(err)
 		}
 		if *stopID == "" {
@@ -232,7 +236,7 @@ func main() {
 		fmt.Printf("Stop job result: %s\n", resp.Message)
 
 	case "kill":
-		if err := killFlags.Parse(os.Args[2:]); err != nil {
+		if err := killFlags.Parse(commandArgs); err != nil {
 			log.Fatal(err)
 		}
 		if *killID == "" {
